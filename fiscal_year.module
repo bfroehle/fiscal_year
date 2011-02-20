@@ -1,0 +1,132 @@
+<?php
+
+/**
+ * Implements hook_field_widget_info().
+ *
+ * Provides an inivisble widget which automatically selects a taxonomy term
+ * corresponding to the fiscal year of a date field.
+ */
+function fiscal_year_field_widget_info() {
+  return array(
+    'fiscal_year_hidden' => array(
+      'label' => t('Fiscal year autocompute (hidden)'),
+      'field types' => array('taxonomy_term_reference'),
+      'settings' => array(
+        'date_field' => NULL,
+      ),
+      'behaviors' => array(
+        'default value' => FIELD_BEHAVIOR_NONE,
+      ),
+    ),
+  );
+}
+
+/**
+ * Implements hook_widget_settings_form().
+ *
+ * Provides an form to let the user choose date field from which to base the
+ * fiscal year.
+ */
+function fiscal_year_field_widget_settings_form($field, $instance) {
+  $form = array();
+  if ($instance['widget']['type'] == 'fiscal_year_hidden') {
+    // Build a list of all date fields in this bundle.
+    $date_fields = array();
+    foreach (field_info_instances($instance['entity_type'], $instance['bundle']) as $field_name => $field_instance) {
+      $field = field_info_field($field_name);
+      if ($field['type'] == 'date') {
+        $date_fields[$field_name] = $field_instance['label'];
+      }
+    }
+    $form['date_field'] = array(
+      '#type' => 'select',
+      '#title' => t('Date field'),
+      '#description' => t('The date field used to compute the fiscal year.'),
+      '#empty_option' => t('- Select an existing date field -'),
+      '#default_value' => $instance['widget']['settings']['date_field'],
+      '#options' => $date_fields,
+    );
+  }
+  return $form;
+}
+
+/**
+ * Implements hook_field_widget_form().
+ *
+ * Provides a hidden element. The #element_validate callback computes the
+ * fiscal year and updates $form_state.
+ */
+function fiscal_year_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
+  $element += array(
+    '#type' => 'hidden',
+    '#element_validate' => array('_fiscal_year_element_validate'),
+  );
+
+  return $element;
+}
+
+/**
+ * Computes the fiscal year for the fiscal_year_hidden field element.
+ *
+ * See the #element_validate callback of fiscal_year_field_widget_form().
+ */
+function _fiscal_year_element_validate($element, &$form_state) {
+  $value = NULL;
+
+  // Read the date field from the instance settings.
+  $instance = field_widget_instance($element, $form_state);
+  if ($date_field = $instance['widget']['settings']['date_field']) {
+    $langcode = $form_state['values']['language'];
+
+    // Read the meeting date from the corresponding date field.
+    if ($meeting_date = $form_state['values'][$date_field][$langcode][0]['value']['date']) {
+
+      // Convert the date into a fiscal year.
+      $typed_term = _fiscal_year_calculate($meeting_date);
+
+      // Taken from taxonomy_autocomplete_validate().
+      $field = field_widget_field($element, $form_state);
+      $vocabularies = array();
+      foreach ($field['settings']['allowed_values'] as $tree) {
+        if ($vocabulary = taxonomy_vocabulary_machine_name_load($tree['vocabulary'])) {
+          $vocabularies[$vocabulary->vid] = $vocabulary;
+        }
+      }
+
+      if ($possibilities = taxonomy_term_load_multiple(array(), array('name' => trim($typed_term), 'vid' => array_keys($vocabularies)))) {
+        $term = array_pop($possibilities);
+      }
+      else {
+        $vocabulary = reset($vocabularies);
+        $term = array(
+          'tid' => 'autocreate',
+          'vid' => $vocabulary->vid,
+          'name' => $typed_term,
+          'vocabulary_machine_name' => $vocabulary->machine_name,
+        );
+      }
+      $value = (array)$term;
+    }
+  }
+
+  form_set_value($element, $value, $form_state);
+}
+
+/**
+ * Computes the fiscal year from a specified date.
+ *
+ * @param $date
+ *   A string which may be converted to a date by PHP's strtotime().
+ *
+ * @return
+ *   The fiscal year of the date as a string.
+ */
+function _fiscal_year_calculate($date) {
+  $date = strtotime($date);
+  $year = (int) date('Y', $date);
+  $fystart = mktime(0, 0, 0, 7, 1, $year);
+  if ($date < $fystart) {
+    $year--;
+  }
+  return $year . '-' . ($year+1);
+}

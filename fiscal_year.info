@@ -1,0 +1,7 @@
+; $Id$
+name = Fiscal year
+description = Provides a hidden taxonomy widget which calculates the fiscal year from a date field.
+core = 7.x
+dependencies[] = date
+dependencies[] = taxonomy
+package = Date/Time
